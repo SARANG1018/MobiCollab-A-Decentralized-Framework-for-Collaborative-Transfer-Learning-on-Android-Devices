@@ -6,7 +6,7 @@ A decentralized framework enabling multiple Android devices to collaboratively t
 
 MobiCollab enables proximity-based collaborative transfer learning where nearby mobile devices discover each other, share training data, and collectively improve an on-device image classification model. The system uses Google Nearby Connections API for P2P networking and TensorFlow Lite for local model training.
 
-![Connection Screen](screenshots/connection.png)
+![Connection Screen](imgs/connection.png)
 
 ## Features
 
@@ -33,7 +33,7 @@ The application uses a peer-to-peer star topology:
 3. **Transfer Learning**: Fine-tunes classification head on collected samples
 4. **Training**: Batch-based training with shuffled samples
 
-![Training Interface](screenshots/training.png)
+![Training Interface](imgs/training.png)
 
 ## Technical Stack
 
@@ -78,8 +78,8 @@ connectPeer(endpointId: String)
 4. Receiving device decodes bitmap and adds to training set
 5. Both devices can train on accumulated samples
 
-![Image Capture Categories](screenshots/capt_img_catg_1.png)
-![Image Capture Categories](screenshots/capt_img_catg_2.png)
+![Image Capture Categories](imgs/capt_img_catg_1.png)
+![Image Capture Categories](imgs/capt_img_catg_2.png)
 
 ### Transfer Learning Process
 
@@ -196,7 +196,7 @@ git clone https://github.com/SARANG1018/MobiCollab-A-Decentralized-Framework-for
 - Models can be trained individually on each device
 - Loss values are displayed during training
 
-![Test Results](screenshots/test1.png)
+![Test Results](imgs/test1.png)
 
 ## Dependencies
 
