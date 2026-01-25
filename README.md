@@ -196,7 +196,8 @@ git clone https://github.com/SARANG1018/MobiCollab-A-Decentralized-Framework-for
 - Models can be trained individually on each device
 - Loss values are displayed during training
 
-![Test Results](imgs/test1.png)
+![Training Progress](imgs/test1.png)
+![Model Inference](imgs/test2.png)
 
 ## Dependencies
 
