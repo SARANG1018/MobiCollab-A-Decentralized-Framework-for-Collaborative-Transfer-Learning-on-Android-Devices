@@ -23,8 +23,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.sharp.Add
 import androidx.compose.material.icons.sharp.Clear
+import androidx.compose.material.icons.sharp.Star
+import androidx.compose.material.icons.sharp.Face
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -43,18 +46,16 @@ import java.util.concurrent.Executor
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
-
-//class ColCameraView{
-    private suspend fun Context.getCameraProvider(): ProcessCameraProvider = suspendCoroutine { continuation ->
-        ProcessCameraProvider.getInstance(this).also { cameraProvider ->
-            cameraProvider.addListener({
-                continuation.resume(cameraProvider.get())
-            }, ContextCompat.getMainExecutor(this))
-        }
+private suspend fun Context.getCameraProvider(): ProcessCameraProvider = suspendCoroutine { continuation ->
+    ProcessCameraProvider.getInstance(this).also { cameraProvider ->
+        cameraProvider.addListener({
+            continuation.resume(cameraProvider.get())
+        }, ContextCompat.getMainExecutor(this))
     }
+}
 
-    @Composable
-    public fun CameraView(
+@Composable
+public fun CameraView(
         outputDirectory: File,
         executor: Executor,
         onTrueImage: (ImageProxy,String) -> Unit,
@@ -62,11 +63,9 @@ import kotlin.coroutines.suspendCoroutine
         onError: (ImageCaptureException) -> Unit,
         onImageUpdate: (Bitmap,Int)->Unit
     ) {
-        // 1
         val lensFacing = CameraSelector.LENS_FACING_BACK
         val context = LocalContext.current
         val lifecycleOwner = LocalLifecycleOwner.current
-
 
         val preview = Preview.Builder().build()
         val previewView = remember { PreviewView(context) }
@@ -75,7 +74,6 @@ import kotlin.coroutines.suspendCoroutine
             .requireLensFacing(lensFacing)
             .build()
 
-        // 2
         LaunchedEffect(lensFacing) {
             val cameraProvider = context.getCameraProvider()
             cameraProvider.unbindAll()
@@ -107,9 +105,7 @@ import kotlin.coroutines.suspendCoroutine
                IconButton(
                    modifier = Modifier.padding(bottom = 20.dp),
                    onClick = {
-                       Log.i("kilo", "ON CLICK")
                        takePhotoAndSaveAsBitmap(
-
                            imageCapture = imageCapture,
                            executor = executor,
                            onBitmapCaptured = onTrueImage,
@@ -120,7 +116,7 @@ import kotlin.coroutines.suspendCoroutine
                    content = {
                        Icon(
                            imageVector = Icons.Sharp.Add,
-                           contentDescription = "Take picture",
+                           contentDescription = "Capture class 1",
                            tint = Color.White,
                            modifier = Modifier
                                .size(100.dp)
@@ -132,9 +128,7 @@ import kotlin.coroutines.suspendCoroutine
                IconButton(
                    modifier = Modifier.padding(bottom = 20.dp),
                    onClick = {
-                       Log.i("kilo", "ON CLICK")
                        takePhotoAndSaveAsBitmap(
-
                            imageCapture = imageCapture,
                            executor = executor,
                            onBitmapCaptured = onFalseImage,
@@ -145,8 +139,54 @@ import kotlin.coroutines.suspendCoroutine
                    content = {
                        Icon(
                            imageVector = Icons.Sharp.Clear,
-                           contentDescription = "Take picture",
+                           contentDescription = "Capture class 2",
                            tint = Color.White,
+                           modifier = Modifier
+                               .size(100.dp)
+                               .padding(1.dp)
+                               .border(1.dp, Color.White, CircleShape)
+                       )
+                   }
+               )
+               IconButton(
+                   modifier = Modifier.padding(bottom = 20.dp),
+                   onClick = {
+                       takePhotoAndSaveAsBitmap(
+                           imageCapture = imageCapture,
+                           executor = executor,
+                           onBitmapCaptured = onTrueImage,
+                           onError = onError,
+                           className = "3"
+                       )
+                   },
+                   content = {
+                       Icon(
+                           imageVector = Icons.Sharp.Star,
+                           contentDescription = "Capture class 3",
+                           tint = Color.Yellow,
+                           modifier = Modifier
+                               .size(100.dp)
+                               .padding(1.dp)
+                               .border(1.dp, Color.White, CircleShape)
+                       )
+                   }
+               )
+               IconButton(
+                   modifier = Modifier.padding(bottom = 20.dp),
+                   onClick = {
+                       takePhotoAndSaveAsBitmap(
+                           imageCapture = imageCapture,
+                           executor = executor,
+                           onBitmapCaptured = onFalseImage,
+                           onError = onError,
+                           className = "4"
+                       )
+                   },
+                   content = {
+                       Icon(
+                           imageVector = Icons.Sharp.Face,
+                           contentDescription = "Capture class 4",
+                           tint = Color.Green,
                            modifier = Modifier
                                .size(100.dp)
                                .padding(1.dp)
@@ -161,54 +201,17 @@ import kotlin.coroutines.suspendCoroutine
 private fun takePhotoAndSaveAsBitmap(
     imageCapture: ImageCapture,
     executor: Executor,
-    onBitmapCaptured: (ImageProxy,String) -> Unit,
+    onBitmapCaptured: (ImageProxy, String) -> Unit,
     onError: (ImageCaptureException) -> Unit,
     className: String
 ) {
-    // Capture the image and process it
     imageCapture.takePicture(executor, object : ImageCapture.OnImageCapturedCallback() {
         override fun onError(exception: ImageCaptureException) {
-            // Handle capture error
             onError(exception)
         }
 
         override fun onCaptureSuccess(image: ImageProxy) {
-            // Convert ImageProxy to Bitmap
-
-
-            // Call the callback with the captured bitmap
-
-            onBitmapCaptured(image,className)
+            onBitmapCaptured(image, className)
         }
     })
 }
-
-    private fun takePhoto(
-        filenameFormat: String,
-        imageCapture: ImageCapture,
-        outputDirectory: File,
-        executor: Executor,
-        onImageCaptured: (Uri) -> Unit,
-        onError: (ImageCaptureException) -> Unit
-    ) {
-
-        val photoFile = File(
-            outputDirectory,
-            SimpleDateFormat(filenameFormat, Locale.US).format(System.currentTimeMillis()) + ".jpg"
-        )
-
-        val outputOptions = ImageCapture.OutputFileOptions.Builder(photoFile).build()
-
-        imageCapture.takePicture(outputOptions, executor, object: ImageCapture.OnImageSavedCallback {
-            override fun onError(exception: ImageCaptureException) {
-                Log.e("kilo", "Take photo error:", exception)
-                onError(exception)
-            }
-
-            override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                val savedUri = Uri.fromFile(photoFile)
-                onImageCaptured(savedUri)
-            }
-        })
-    }
-//}

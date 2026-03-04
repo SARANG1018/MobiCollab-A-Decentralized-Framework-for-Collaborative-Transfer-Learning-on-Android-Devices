@@ -21,18 +21,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             CollaboriteTheme {
-                // A surface container using the 'background' color from the theme
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     Greeting("Android")
                 }
             }
         }
 
-        val changePage = Intent(this,ConnectionActivity::class.java)
-
-        // Error: "Please specify constructor invocation;
-        // classifier 'Page2' does not have a companion object"
-
+        val changePage = Intent(this, ConnectionActivity::class.java)
         startActivity(changePage)
 
     }

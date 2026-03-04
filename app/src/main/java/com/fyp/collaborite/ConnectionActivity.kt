@@ -1,6 +1,5 @@
 package com.fyp.collaborite
 
-//import androidx.compose.foundation.layout.ColumnScopeInstance.align
 import android.annotation.SuppressLint
 import android.content.IntentFilter
 import android.content.pm.PackageManager
@@ -53,6 +52,9 @@ import com.fyp.collaborite.distributed.wifi.ServiceManager
 import com.fyp.collaborite.distributed.wifi.WifiKtsManager
 import com.fyp.collaborite.distributed.wifi.WifiManager
 import com.fyp.collaborite.ui.theme.CollaboriteTheme
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import com.google.android.gms.nearby.connection.DiscoveredEndpointInfo
 import org.tensorflow.lite.examples.modelpersonalization.TransferLearningHelper
 import org.tensorflow.lite.support.label.Category
@@ -70,6 +72,9 @@ class ConnectionActivity : ComponentActivity(),TransferLearningHelper.Classifier
     private var shouldShowCamera: MutableState<Boolean> = mutableStateOf(false)
     private var tvLossConsumerPause : MutableState<String> = mutableStateOf("")
     private var tvLossConsumerResume : MutableState<String> = mutableStateOf("")
+    private var classifiedValue = mutableStateOf("--")
+    private var latestBitmap: Bitmap? = null
+    private var latestRotation: Int = 0
     private lateinit var outputDirectory: File
     private lateinit var cameraExecutor: ExecutorService
     private var isObjectPresent = mutableStateOf(false)
@@ -77,39 +82,17 @@ class ConnectionActivity : ComponentActivity(),TransferLearningHelper.Classifier
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        setContent{
-            var roomId by remember { mutableStateOf("") }
+        setContent {
             ConnectionPreview()
+        }
 
-
-            }
-        requestCameraPermission();
-        // Indicates a change in the Wi-Fi Direct status.
-        intentFilter.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
-
-        // Indicates a change in the list of available peers.
-        intentFilter.addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
-
-        // Indicates the state of Wi-Fi Direct connectivity has changed.
-        intentFilter.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
-
-        // Indicates this device's details have changed.
-        intentFilter.addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION)
-
-//        val manager:WifiP2pManager = getSystemService(Context.WIFI_P2P_SERVICE) as WifiP2pManager
-
-
-//        wifiManager=WifiManager(this, getSystemService(Context.WIFI_P2P_SERVICE) as WifiP2pManager,manager.initialize(this, mainLooper, null))
-//        wifiManager.discoverPeers()
-//        serviceManager=ServiceManager(wifiManager)
-//        serviceManager.startRegistration()
-        wifiKtsManager=WifiKtsManager(this)
+        requestCameraPermission()
+        wifiKtsManager = WifiKtsManager(this)
 
 
     }
     private val REQUEST_CODE_REQUIRED_PERMISSIONS = 1
 
-    @CallSuper
     override fun onStart() {
         super.onStart()
         if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
@@ -118,46 +101,44 @@ class ConnectionActivity : ComponentActivity(),TransferLearningHelper.Classifier
                 REQUEST_CODE_REQUIRED_PERMISSIONS
             )
         }
-
     }
 
-
-//    @CallSuper
-//    override fun onRequestPermissionsResult(
-//        requestCode: Int,
-//        permissions: Array<out String>,
-//        grantResults: IntArray
-//    ) {
-//        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-////        val errMsg = "Cannot start without required permissions"
-////        if (requestCode == REQUEST_CODE_REQUIRED_PERMISSIONS) {
-////            grantResults.forEach {
-////                if (it == PackageManager.PERMISSION_DENIED) {
-////                    Toast.makeText(this, errMsg, Toast.LENGTH_LONG).show()
-////                    finish()
-////                    return
-////                }
-////            }
-////            recreate()
-////        }
-//    }
-    public override fun onResume() {
+    override fun onResume() {
         super.onResume()
-//        registerReceiver(
-//            wifiManager.registerReceiver(), intentFilter)
     }
 
-    public override fun onPause() {
+    override fun onPause() {
         super.onPause()
-//        unregisterReceiver(wifiManager.receiver)
     }
 
 
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     fun AppBar(heading: String, modifier: Modifier = Modifier) {
-        TopAppBar(title = { Text(text = heading) })
-
+        TopAppBar(
+            title = { Text(text = heading) },
+            actions = {
+                androidx.compose.material3.TextButton(onClick = {
+                    wifiKtsManager.startTrainingManually()
+                }) {
+                    Text("Train", color = androidx.compose.material3.MaterialTheme.colorScheme.primary)
+                }
+                androidx.compose.material3.TextButton(onClick = {
+                    wifiKtsManager.syncWeightsWithPeers()
+                }) {
+                    Text("Sync", color = androidx.compose.material3.MaterialTheme.colorScheme.primary)
+                }
+                androidx.compose.material3.TextButton(onClick = {
+                    val bmp = latestBitmap
+                    Log.d("PIPELINE", "[TEST] Test button pressed. Has frame: ${bmp != null}")
+                    if (bmp != null) {
+                        wifiKtsManager.transferLearningHelper.classify(bmp, latestRotation)
+                    }
+                }) {
+                    Text("Test", color = androidx.compose.material3.MaterialTheme.colorScheme.primary)
+                }
+            }
+        )
     }
 
     @OptIn(ExperimentalMaterial3Api::class)
@@ -168,34 +149,21 @@ class ConnectionActivity : ComponentActivity(),TransferLearningHelper.Classifier
             content = {
                 items(peers){it->
 
-                    val dev: DiscoveredEndpointInfo? =wifiKtsManager.peerMap.get(it);
+                    val dev: DiscoveredEndpointInfo? = wifiKtsManager.peerMap[it]
 
                     ListItem(
                         modifier = Modifier.fillMaxSize(),
                         headlineText = { Text(dev?.endpointName.orEmpty()) },
-                        supportingText = {
-                            Text(text =dev?.serviceId.orEmpty()
-                            )}, trailingContent = {
-                            if(!wifiKtsManager.connectedPeers.contains(it)){
-//                                executeTemp(it)
-
-
+                        supportingText = { Text(text = dev?.serviceId.orEmpty()) },
+                        trailingContent = {
+                            if (!wifiKtsManager.connectedPeers.contains(it)) {
                                 Button(onClick = {
-//                                    wifiManager.connectPeer(it)
                                     wifiKtsManager.connectPeer(it)
-
                                 }) {
                                     Text("Connect")
                                 }
-                            }else{
-
-                                Column {
-                                    Text("Connected")
-
-//                                    Text("${wifiKtsManager.weightInitialized[it]?.value?.value}")
-
-                                }
-
+                            } else {
+                                Text("Connected")
                             }
                         })
 
@@ -222,7 +190,7 @@ class ConnectionActivity : ComponentActivity(),TransferLearningHelper.Classifier
                     onValueChange(it.toInt());
                 }
 
-                            },
+            },
             label = { Text(label) }
         )
 
@@ -232,12 +200,12 @@ class ConnectionActivity : ComponentActivity(),TransferLearningHelper.Classifier
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     fun CButton(modifier: Modifier=Modifier,onClick: ()->Unit,text: String="Submit") {
-       
+
 
         Button(
             onClick = onClick ,content={
-            Text(text = text)
-        }) 
+                Text(text = text)
+            })
 
     }
 
@@ -259,41 +227,23 @@ class ConnectionActivity : ComponentActivity(),TransferLearningHelper.Classifier
                 topBar = { AppBar(heading = "Connection") }
             ){
                 Column(modifier=Modifier.padding(it), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(text = "Weighted Value:${wifiKtsManager.sampleCount.value}")
+                    Text(text = "Image Count:${wifiKtsManager.sampleCount.value}")
+                    Text(text = "Training")
+                    Text(text = "Loss:")
+                    Text(text = tvLossConsumerPause.value)
+                    Text(text = "Classified Value: ${classifiedValue.value}")
 
                     InputField(label = "Start Discovery", onValueChange = {
-                        codeNumber=it
+                        codeNumber = it
                     })
                     Button(
-                        enabled = codeNumber!=0,
-                        content = { Text(text = "submit")},
-
-                        onClick ={
-
-                        wifiKtsManager.xstartAdvertising(codeNumber.toString())
-                        wifiKtsManager.xstartDiscovery()
-
-
-                    })
+                        enabled = codeNumber != 0,
+                        content = { Text(text = "submit") },
+                        onClick = {
+                            wifiKtsManager.xstartAdvertising(codeNumber.toString())
+                            wifiKtsManager.xstartDiscovery()
+                        })
                     Text("______")
-//                    if (shouldShowCamera.value) {
-//                        CameraView(
-//                            outputDirectory = outputDirectory,
-//                            executor = cameraExecutor,
-//                            onImageCaptured = ::handleImageCapture,
-//                            onError = { Log.e("kilo", "View error:", it) }
-//                        )
-//                    }
-//                    InputField(label = "Send Data", onValueChange = {
-//                        data=it
-//                    })
-//                    Button(
-//
-//                        content = {Text("Send Data")},
-//                        enabled = wifiKtsManager.connectedPeers.size>0,
-//                        onClick = {
-//                        wifiKtsManager.sendWeights(data)
-//                    })
                     Box{
                         if (shouldShowCamera) {
                             CameraView(
@@ -303,42 +253,35 @@ class ConnectionActivity : ComponentActivity(),TransferLearningHelper.Classifier
                                 onFalseImage= ::handleImageCapture,
 
                                 onError = { Log.e("kilo", "View error:", it) },
-                                onImageUpdate = {it,y->
-//                                    wifiKtsManager.transferLearningHelper.classify(it,y)
+                                onImageUpdate = { bmp, rot ->
+                                    latestBitmap = bmp
+                                    latestRotation = rot
                                 }
                             )
                         } else {
-                          Column {
-                              Text(text = "Peers")
-                              PeerList(peers = wifiKtsManager.peers)
-                          }
+                            Column {
+                                Text(text = "Peers")
+                                PeerList(peers = wifiKtsManager.peers)
+                            }
                         }
 
                         IconButton(
-                            enabled=wifiKtsManager.peers.isNotEmpty() || shouldShowCamera,
+                            enabled = wifiKtsManager.peers.isNotEmpty() || shouldShowCamera,
                             modifier = Modifier.align(Alignment.TopEnd),
                             onClick = {
-                            shouldShowCamera = !shouldShowCamera
-                        }) {
+                                shouldShowCamera = !shouldShowCamera
+                            }) {
                             Icon(
                                 modifier = Modifier.padding(8.dp),
-                                tint= if(shouldShowCamera) Color.White else Color.Black,
+                                tint = if (shouldShowCamera) Color.White else Color.Black,
                                 imageVector = Icons.Filled.ArrowBack,
                                 contentDescription = "Back"
                             )
                         }
-
-
                     }
-
-
-
-
                 }
-
             }
         }
-
     }
 
     private fun requestCameraPermission() {
@@ -350,10 +293,8 @@ class ConnectionActivity : ComponentActivity(),TransferLearningHelper.Classifier
                 this,
                 android.Manifest.permission.CAMERA
             ) == PackageManager.PERMISSION_GRANTED -> {
-                Log.i("kilo", "Permission previously granted")
-                shouldShowCamera.value = true //
+                shouldShowCamera.value = true
             }
-
             ActivityCompat.shouldShowRequestPermissionRationale(
                 this,
                 android.Manifest.permission.CAMERA
@@ -366,8 +307,7 @@ class ConnectionActivity : ComponentActivity(),TransferLearningHelper.Classifier
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            Log.i("kilo", "Permission granted")
-            shouldShowCamera.value = true //
+            shouldShowCamera.value = true
         } else {
             Log.i("kilo", "Permission denied")
         }
@@ -386,7 +326,7 @@ class ConnectionActivity : ComponentActivity(),TransferLearningHelper.Classifier
         return Bitmap.createScaledBitmap(image, width, height, true)
     }
     private fun handleImageCapture(image: ImageProxy,className:String) {
-        Log.i("kilo", "Image captured: ")
+        Log.d("PIPELINE", "[CAPTURE] Image captured for class=$className")
 
         val imageRotation = image.imageInfo.rotationDegrees
         val buffer = image.planes[0].buffer
@@ -394,24 +334,12 @@ class ConnectionActivity : ComponentActivity(),TransferLearningHelper.Classifier
 
         buffer.get(bytes)
         val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-        val bit2=getResizedBitmap(bitmap,500)!!
-
-        // Release the ImageProxy
-
-
-        // Pass Bitmap and rotation to the transfer learning helper for
-        // processing and prepare training data.
+        Log.d("PIPELINE", "[CAPTURE] Bitmap decoded: ${bitmap.width}x${bitmap.height}, rotation=$imageRotation")
+        
         wifiKtsManager.transferLearningHelper.addSample(bitmap, className, imageRotation)
-        wifiKtsManager.sampleCount.value=wifiKtsManager.transferLearningHelper.getSampleCount()
+        wifiKtsManager.sampleCount.value = wifiKtsManager.transferLearningHelper.getSampleCount()
+        Log.d("PIPELINE", "[CAPTURE] Sample added. Total samples: ${wifiKtsManager.sampleCount.value}")
         image.close()
-//        wifiKtsManager.transferLearningHelper.startTraining();
-//
-//        Timer("Stopping Training", false).schedule(1500) {
-//            wifiKtsManager.transferLearningHelper.pauseTraining()
-//        }
-        wifiKtsManager.sendWeights(bit2,className)
-//        transferLearningHelper.addSample(bitmap,"1",)
-//        shouldShowCamera.value = false
     }
 
     private fun getOutputDirectory(): File {
@@ -430,9 +358,7 @@ class ConnectionActivity : ComponentActivity(),TransferLearningHelper.Classifier
 
     @SuppressLint("NotifyDataSetChanged")
     override fun onError(error: String) {
-//        activity?.runOnUiThread {
-            Toast.makeText(applicationContext, error, Toast.LENGTH_SHORT).show()
-//        }
+        Toast.makeText(applicationContext, error, Toast.LENGTH_SHORT).show()
     }
 
     @SuppressLint("NotifyDataSetChanged")
@@ -440,25 +366,23 @@ class ConnectionActivity : ComponentActivity(),TransferLearningHelper.Classifier
         results: List<Category>?,
         inferenceTime: Long
     ) {
-//        activity?.runOnUiThread {
-            // Update the result in inference mode.
-
-                // Show result
-                results?.let { list ->
-                    Log.d("WIFI","${list.size} : First Elemenet: ${list[0]}")
-                }
-
-
-//        }
+        results?.let { list ->
+            val top = list.maxByOrNull { it.score }
+            if (top != null) {
+                classifiedValue.value = top.label
+            }
+            Log.d("PIPELINE", "[TEST] Classification result: ${list.joinToString { "${it.label}=${String.format(Locale.US, "%.3f", it.score)}" }}")
+            Log.d("PIPELINE", "[TEST] Top prediction: ${top?.label}")
+        }
     }
 
-    // Show the loss number after each training.
     override fun onLossResults(lossNumber: Float) {
+        Log.d("PIPELINE", "[TRAIN] Loss: $lossNumber")
         String.format(
             Locale.US,
             "Loss: %.3f", lossNumber
         ).let {
-           tvLossConsumerPause.value = it
+            tvLossConsumerPause.value = it
             tvLossConsumerResume.value = it
         }
     }
