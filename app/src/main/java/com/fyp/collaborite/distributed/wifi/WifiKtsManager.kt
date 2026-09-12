@@ -24,6 +24,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import java.util.concurrent.locks.ReentrantLock
 
 
 class WifiKtsManager(val activity: ConnectionActivity) {
@@ -44,8 +45,11 @@ class WifiKtsManager(val activity: ConnectionActivity) {
     val syncStatus = mutableStateOf("Not synced")
     private val receivedPeerWeights = mutableMapOf<String, File>()
     private val peerSampleCounts = mutableMapOf<String, Int>()
+    private val peerWeightTimestamps = mutableMapOf<String, Long>()
     private var isSyncing = false
     private var waitingForPeers = false
+    private var currentSyncGeneration = 0
+    private val weightsLock = ReentrantLock()
 
     private val checkpointDir: File by lazy {
         File(activity.filesDir, "federated_checkpoints").apply {
@@ -59,7 +63,7 @@ class WifiKtsManager(val activity: ConnectionActivity) {
     public lateinit var transferLearningHelper: TransferLearningHelper;
     init {
         transferLearningHelper = TransferLearningHelper(
-            context=activity,
+            context=activity.applicationContext,
             classifierListener = activity
         )
     }
@@ -113,9 +117,19 @@ class WifiKtsManager(val activity: ConnectionActivity) {
         }
 
         isSyncing = true
+        currentSyncGeneration++  // FIX #2: Increment generation for this sync attempt
+        val mySyncGen = currentSyncGeneration
         syncStatus.value = "Sending weights..."
-        receivedPeerWeights.clear()
-        peerSampleCounts.clear()
+        
+        // FIX #7: Use lock to prevent race condition when clearing weights during payload reception
+        weightsLock.lock()
+        try {
+            receivedPeerWeights.clear()
+            peerSampleCounts.clear()
+            peerWeightTimestamps.clear()
+        } finally {
+            weightsLock.unlock()
+        }
 
         // send weights to all peers
         val sent = sendModelWeights()
@@ -144,13 +158,31 @@ class WifiKtsManager(val activity: ConnectionActivity) {
             while (receivedPeerWeights.size < connectedPeers.size) {
                 if (System.currentTimeMillis() - startTime > timeout) {
                     Log.w("WIFI", "Timeout waiting for peers. Got ${receivedPeerWeights.size}/${connectedPeers.size}")
-                    break
+                    
+                    // FIX #1: Abort instead of continuing with partial data
+                    waitingForPeers = false
+                    // FIX #2: Only abort if this is still the current sync generation
+                    if (mySyncGen == currentSyncGeneration) {
+                        isSyncing = false
+                        syncStatus.value = "Sync timed out (${receivedPeerWeights.size}/${connectedPeers.size} replied)"
+                        CoroutineScope(Dispatchers.Main).launch {
+                            android.widget.Toast.makeText(
+                                activity,
+                                "Sync timed out: only ${receivedPeerWeights.size}/${connectedPeers.size} peers responded",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                    return@launch
                 }
                 delay(500)
             }
 
             waitingForPeers = false
-            performFedAvgAndInject()
+            // FIX #2: Only perform FedAvg if this is still the current sync generation
+            if (mySyncGen == currentSyncGeneration) {
+                performFedAvgAndInject()
+            }
         }
     }
 
@@ -171,24 +203,44 @@ class WifiKtsManager(val activity: ConnectionActivity) {
             val allWeights = mutableListOf(localWeights)
             val allSampleCounts = mutableListOf(transferLearningHelper.getSampleCount())
 
-            // extract each peer's weights from their checkpoint files
-            for ((peerId, peerFile) in receivedPeerWeights) {
-                try {
-                    // restore peer checkpoint into model temporarily
-                    val restoreOk = transferLearningHelper.restoreWeights(peerFile.absolutePath)
-                    if (!restoreOk) {
-                        Log.e("WIFI", "Failed to restore peer $peerId checkpoint")
-                        continue
-                    }
+            // FIX #7: Use lock to prevent race condition when iterating over weights during payload reception
+            weightsLock.lock()
+            try {
+                // extract each peer's weights from their checkpoint files
+                for ((peerId, peerFile) in receivedPeerWeights) {
+                    try {
+                        // FIX #4: Validate sample count exists for this peer
+                        if (!peerSampleCounts.containsKey(peerId)) {
+                            Log.w("WIFI", "Skipping peer $peerId: missing sample count")
+                            continue
+                        }
 
-                    val peerWeights = transferLearningHelper.extractWeights(checkpointDir.absolutePath)
-                    if (peerWeights != null) {
-                        allWeights.add(peerWeights)
-                        allSampleCounts.add(peerSampleCounts[peerId] ?: transferLearningHelper.getSampleCount())
+                        // FIX #5: Check if weights are stale (older than 5 minutes from sync start)
+                        val weightAge = System.currentTimeMillis() - (peerWeightTimestamps[peerId] ?: 0L)
+                        val staleThresholdMs = 5 * 60 * 1000L  // 5 minutes
+                        if (weightAge > staleThresholdMs) {
+                            Log.w("WIFI", "Skipping peer $peerId: weights are stale (${weightAge / 1000}s old)")
+                            continue
+                        }
+
+                        // restore peer checkpoint into model temporarily
+                        val restoreOk = transferLearningHelper.restoreWeights(peerFile.absolutePath)
+                        if (!restoreOk) {
+                            Log.e("WIFI", "Failed to restore peer $peerId checkpoint")
+                            continue
+                        }
+
+                        val peerWeights = transferLearningHelper.extractWeights(checkpointDir.absolutePath)
+                        if (peerWeights != null) {
+                            allWeights.add(peerWeights)
+                            allSampleCounts.add(peerSampleCounts[peerId]!!)  // Now safe to use ! since we validated
+                        }
+                    } catch (e: Exception) {
+                        Log.e("WIFI", "Error extracting peer $peerId weights: ${e.message}")
                     }
-                } catch (e: Exception) {
-                    Log.e("WIFI", "Error extracting peer $peerId weights: ${e.message}")
                 }
+            } finally {
+                weightsLock.unlock()
             }
 
             Log.d("WIFI", "FedAvg: ${allWeights.size} participants")
@@ -248,52 +300,76 @@ class WifiKtsManager(val activity: ConnectionActivity) {
             return false
         }
 
-        try {
-            // Step 1: Save current model weights to checkpoint file
-            val checkpointPath = File(checkpointDir, "local_weights.ckpt").absolutePath
-            val saveSuccess = transferLearningHelper.saveWeights(checkpointPath)
+        // FIX #3: Add retry logic with exponential backoff
+        val maxRetries = 3
+        var lastException: Exception? = null
 
-            if (!saveSuccess) {
-                Log.e("WIFI", "Failed to save weights to checkpoint")
-                return false
-            }
+        for (attempt in 1..maxRetries) {
+            try {
+                // Step 1: Save current model weights to checkpoint file
+                val checkpointPath = File(checkpointDir, "local_weights.ckpt").absolutePath
+                val saveSuccess = transferLearningHelper.saveWeights(checkpointPath)
 
-            // Step 2: Read checkpoint file as byte array
-            val checkpointFile = File(checkpointPath)
-            if (!checkpointFile.exists()) {
-                Log.e("WIFI", "Checkpoint file not found after save")
-                return false
-            }
+                if (!saveSuccess) {
+                    Log.e("WIFI", "Attempt $attempt: Failed to save weights to checkpoint")
+                    lastException = Exception("Failed to save weights")
+                    if (attempt < maxRetries) {
+                        Thread.sleep(100L * attempt)  // Simple backoff
+                        continue
+                    }
+                    return false
+                }
 
-            val weightBytes = checkpointFile.readBytes()
-            val sampleCount = transferLearningHelper.getSampleCount()
+                // Step 2: Read checkpoint file as byte array
+                val checkpointFile = File(checkpointPath)
+                if (!checkpointFile.exists()) {
+                    Log.e("WIFI", "Attempt $attempt: Checkpoint file not found after save")
+                    lastException = Exception("Checkpoint file not found")
+                    if (attempt < maxRetries) {
+                        Thread.sleep(100L * attempt)
+                        continue
+                    }
+                    return false
+                }
 
-            // prepend 4 bytes of sample count to weight bytes
-            val buf = java.nio.ByteBuffer.allocate(4 + weightBytes.size)
-            buf.order(java.nio.ByteOrder.BIG_ENDIAN)
-            buf.putInt(sampleCount)
-            buf.put(weightBytes)
-            val payload = buf.array()
+                val weightBytes = checkpointFile.readBytes()
+                val sampleCount = transferLearningHelper.getSampleCount()
 
-            Log.d("WIFI", "Sending ${payload.size} bytes (4 header + ${weightBytes.size} weights, $sampleCount samples)")
+                // prepend 4 bytes of sample count to weight bytes
+                val buf = java.nio.ByteBuffer.allocate(4 + weightBytes.size)
+                buf.order(java.nio.ByteOrder.BIG_ENDIAN)
+                buf.putInt(sampleCount)
+                buf.put(weightBytes)
+                val payload = buf.array()
 
-            connectionsClient.sendPayload(
-                connectedPeers,
-                Payload.fromBytes(payload)
-            ).addOnCompleteListener { task ->
-                if (task.isSuccessful) {
-                    Log.d("WIFI", "Model weights sent successfully to ${connectedPeers.size} peer(s)")
-                } else if (task.exception != null) {
-                    Log.e("WIFI", "Failed to send weights: ${task.exception!!.message}")
+                Log.d("WIFI", "Attempt $attempt: Sending ${payload.size} bytes (4 header + ${weightBytes.size} weights, $sampleCount samples)")
+
+                connectionsClient.sendPayload(
+                    connectedPeers,
+                    Payload.fromBytes(payload)
+                ).addOnCompleteListener { task ->
+                    if (task.isSuccessful) {
+                        Log.d("WIFI", "Model weights sent successfully to ${connectedPeers.size} peer(s)")
+                    } else if (task.exception != null) {
+                        Log.e("WIFI", "Failed to send weights: ${task.exception!!.message}")
+                    }
+                }
+
+                return true
+
+            } catch (e: Exception) {
+                Log.e("WIFI", "Attempt $attempt: Error sending model weights: ${e.message}")
+                lastException = e
+                if (attempt < maxRetries) {
+                    val backoffMs = 100L * (1 shl (attempt - 1))  // Exponential: 100ms, 200ms, 400ms
+                    Log.d("WIFI", "Retrying in ${backoffMs}ms...")
+                    Thread.sleep(backoffMs)
                 }
             }
-
-            return true
-
-        } catch (e: Exception) {
-            Log.e("WIFI", "Error sending model weights: ${e.message}", e)
-            return false
         }
+
+        Log.e("WIFI", "Failed to send weights after $maxRetries attempts: ${lastException?.message}")
+        return false
     }
 
     private val STRATEGY = Strategy.P2P_STAR
@@ -401,8 +477,15 @@ class WifiKtsManager(val activity: ConnectionActivity) {
 
                         Log.d("WIFI", "Peer $endpointId: $peerSamples samples, ${ckptBytes.size} weight bytes")
 
-                        receivedPeerWeights[endpointId] = peerCheckpointFile
-                        peerSampleCounts[endpointId] = peerSamples
+                        // FIX #7: Use lock to prevent race condition when storing weights during FedAvg iteration
+                        weightsLock.lock()
+                        try {
+                            receivedPeerWeights[endpointId] = peerCheckpointFile
+                            peerSampleCounts[endpointId] = peerSamples
+                            peerWeightTimestamps[endpointId] = System.currentTimeMillis()  // FIX #5: Record arrival time
+                        } finally {
+                            weightsLock.unlock()
+                        }
 
                         if (!isSyncing && !waitingForPeers) {
                             Log.d("WIFI", "Received peer weights outside sync. Stored for next sync.")
@@ -436,8 +519,8 @@ class WifiKtsManager(val activity: ConnectionActivity) {
     }
 
     private fun resetGame() {
-
-
+        // reset data
+    }
 
     private lateinit var connectionsClient: ConnectionsClient
     init{

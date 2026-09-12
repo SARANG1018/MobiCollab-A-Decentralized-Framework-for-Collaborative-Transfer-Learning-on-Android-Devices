@@ -342,6 +342,34 @@ class TransferLearningHelper(
             avgBs[i] = sum
         }
 
+        // FIX #6: Validate averaged weights for NaN/Inf before returning
+        var hasInvalidWeights = false
+        for (row in 0 until wsRows) {
+            for (col in 0 until wsCols) {
+                if (!avgWs[row][col].isFinite()) {
+                    Log.e(TAG, "FedAvg: NaN/Inf detected in averaged weights at ws[$row][$col] = ${avgWs[row][col]}")
+                    hasInvalidWeights = true
+                    break
+                }
+            }
+            if (hasInvalidWeights) break
+        }
+
+        if (!hasInvalidWeights) {
+            for (i in 0 until bsSize) {
+                if (!avgBs[i].isFinite()) {
+                    Log.e(TAG, "FedAvg: NaN/Inf detected in averaged biases at bs[$i] = ${avgBs[i]}")
+                    hasInvalidWeights = true
+                    break
+                }
+            }
+        }
+
+        if (hasInvalidWeights) {
+            Log.e(TAG, "FedAvg: Rejecting averaged weights due to NaN/Inf values")
+            return null
+        }
+
         Log.i(TAG, "FedAvg completed: $numClients clients, $totalSamples total samples")
         return ModelWeights(ws = avgWs, bs = avgBs)
     }
