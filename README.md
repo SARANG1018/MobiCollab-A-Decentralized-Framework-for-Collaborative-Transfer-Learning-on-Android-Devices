@@ -25,40 +25,43 @@ Nearby Connections `P2P_STAR` topology. There is no central training server.
 
 ```mermaid
 flowchart LR
-	subgraph A[Device A]
-		A1[Capture labeled images] --> A2[Local dataset]
-		A2 --> A3[Train local TFLite model]
-		A3 --> A4[Checkpoint<br/>weights + sample count]
+	subgraph ANDROID[Android layer]
+		A[Device A]
+		B[Device B]
+		C[Device C]
+		CAP[CameraX + Jetpack Compose<br/>capture labeled samples]
+		A --> CAP
+		B --> CAP
+		C --> CAP
 	end
 
-	subgraph B[Device B]
-		B1[Capture labeled images] --> B2[Local dataset]
-		B2 --> B3[Train local TFLite model]
-		B3 --> B4[Checkpoint<br/>weights + sample count]
+	subgraph ML[ML layer]
+		DATA[Local dataset<br/>stored on each device]
+		TRAIN[TensorFlow Lite<br/>local transfer learning]
+		SAVE[Model checkpoint<br/>weights + sample count]
+		AVG[Weighted FedAvg<br/>runs on every device]
+		MODEL[Updated local model]
+		DATA --> TRAIN --> SAVE
+		AVG --> MODEL
 	end
 
-	subgraph C[Device C]
-		C1[Capture labeled images] --> C2[Local dataset]
-		C2 --> C3[Train local TFLite model]
-		C3 --> C4[Checkpoint<br/>weights + sample count]
+	subgraph DIST[Distributed layer]
+		P2P[Google Nearby Connections<br/>P2P_STAR discovery]
+		EXCHANGE[Exchange model checkpoints<br/>not raw images]
+		P2P --> EXCHANGE
 	end
 
-	A4 <--> N[Nearby Connections<br/>P2P_STAR network]
-	B4 <--> N
-	C4 <--> N
-
-	N --> X[Exchange model checkpoints]
-	X --> F[Weighted FedAvg<br/>runs on every device]
-	F --> U[Update each local model]
-	U --> I[Local inference<br/>classification result]
-	U -. next training round .-> A3
-	U -. next training round .-> B3
-	U -. next training round .-> C3
+	CAP --> DATA
+	SAVE <--> P2P
+	EXCHANGE --> AVG
+	MODEL --> RESULT[Android inference<br/>classification result]
+	MODEL -. next round .-> TRAIN
 ```
 
-**How to read it:** each device captures and trains locally. Devices exchange
-model checkpoints through Nearby Connections, independently run weighted FedAvg,
-and continue training with the updated model. Raw images do not leave the device.
+**How to read it:** Android devices capture data locally, the ML layer trains
+locally, and the distributed layer exchanges checkpoints. Each device then runs
+weighted FedAvg and continues with its updated model. Raw images do not leave
+the device.
 
 ![Training Interface](imgs/training.png)
 
