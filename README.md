@@ -19,19 +19,41 @@ MobiCollab enables proximity-based collaborative transfer learning where nearby 
 
 ## System Architecture
 
-### Network Architecture
+The workflow below shows the complete training loop. Every device runs the same
+local learning and aggregation steps; the advertiser only helps form the
+Nearby Connections `P2P_STAR` topology. There is no central training server.
 
-The application uses a peer-to-peer star topology:
-- One device acts as advertiser (host)
-- Multiple devices can discover and connect as clients
-- Data flows bidirectionally between connected peers
+```mermaid
+flowchart LR
+	U[User captures labeled image]
+	C[CameraX + Jetpack Compose]
+	L[Local dataset on device]
+	M[TensorFlow Lite model<br/>MobileNet features + trainable head]
+	T[Local training<br/>Transfer learning]
+	W[Save local checkpoint<br/>weights + sample count]
+	N[Google Nearby Connections<br/>P2P_STAR peer network]
+	R[Receive peer checkpoints]
+	A[Weighted FedAvg<br/>weighted by sample count]
+	I[Inject averaged weights<br/>back into local model]
+	P[Run inference<br/>on a new image]
+	O[Classification result]
 
-### Machine Learning Pipeline
+	U --> C --> L --> M
+	L --> T --> W
+	W <--> N
+	N --> R --> A
+	W --> A
+	A --> I --> M
+	M --> P --> O
+	I -. repeat local training and sync .-> T
 
-1. **Base Model**: Pre-trained MobileNet model (downloaded during build)
-2. **Feature Extraction**: Bottleneck layer extracts 62,720-dimensional features
-3. **Transfer Learning**: Fine-tunes classification head on collected samples
-4. **Training**: Batch-based training with shuffled samples
+	N --- D1[Device A]
+	N --- D2[Device B]
+	N --- D3[Device C]
+```
+
+**In short:** capture locally, train locally, exchange model weights (not raw
+images), average them across peers, and continue with the improved model.
 
 ![Training Interface](imgs/training.png)
 
