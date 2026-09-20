@@ -8,15 +8,6 @@ MobiCollab enables proximity-based collaborative transfer learning where nearby 
 
 ![Connection Screen](imgs/connection.png)
 
-## Features
-
-- Decentralized peer-to-peer architecture
-- Automatic discovery of nearby devices
-- On-device transfer learning with TensorFlow Lite
-- Real-time image capture using CameraX
-- Multi-device coordination (P2P_STAR topology)
-- Binary image classification
-
 ## System Architecture
 
 The workflow below shows the complete training loop. Every device runs the same
@@ -56,12 +47,33 @@ flowchart LR
 	EXCHANGE --> AVG
 	MODEL --> RESULT[Android inference<br/>classification result]
 	MODEL -. next round .-> TRAIN
+
+	style ANDROID fill:#F1FAFC,stroke:#2F7E8A,stroke-width:2px,color:#173B4D
+	style ML fill:#FCF7E8,stroke:#C9963E,stroke-width:2px,color:#493A1F
+	style DIST fill:#FFF1EA,stroke:#C56A45,stroke-width:2px,color:#4A2A22
+	classDef device fill:#DDF3F0,stroke:#2F7E8A,stroke-width:1.5px,color:#173B4D
+	classDef model fill:#F5E9C8,stroke:#C9963E,stroke-width:1.5px,color:#493A1F
+	classDef network fill:#F8DCCE,stroke:#C56A45,stroke-width:1.5px,color:#4A2A22
+	classDef result fill:#E5F1D6,stroke:#708C4A,stroke-width:1.5px,color:#2F4520
+	class A,B,C,CAP device
+	class DATA,TRAIN,SAVE,AVG,MODEL model
+	class P2P,EXCHANGE network
+	class RESULT result
 ```
 
 **How to read it:** Android devices capture data locally, the ML layer trains
 locally, and the distributed layer exchanges checkpoints. Each device then runs
 weighted FedAvg and continues with its updated model. Raw images do not leave
 the device.
+
+## Features
+
+- Decentralized peer-to-peer architecture
+- Automatic discovery of nearby devices
+- On-device transfer learning with TensorFlow Lite
+- Real-time image capture using CameraX
+- Multi-device coordination (P2P_STAR topology)
+- Binary image classification
 
 ![Training Interface](imgs/training.png)
 
