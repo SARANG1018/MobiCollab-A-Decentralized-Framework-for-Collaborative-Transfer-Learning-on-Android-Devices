@@ -25,35 +25,40 @@ Nearby Connections `P2P_STAR` topology. There is no central training server.
 
 ```mermaid
 flowchart LR
-	U[User captures labeled image]
-	C[CameraX + Jetpack Compose]
-	L[Local dataset on device]
-	M[TensorFlow Lite model<br/>MobileNet features + trainable head]
-	T[Local training<br/>Transfer learning]
-	W[Save local checkpoint<br/>weights + sample count]
-	N[Google Nearby Connections<br/>P2P_STAR peer network]
-	R[Receive peer checkpoints]
-	A[Weighted FedAvg<br/>weighted by sample count]
-	I[Inject averaged weights<br/>back into local model]
-	P[Run inference<br/>on a new image]
-	O[Classification result]
+	subgraph A[Device A]
+		A1[Capture labeled images] --> A2[Local dataset]
+		A2 --> A3[Train local TFLite model]
+		A3 --> A4[Checkpoint<br/>weights + sample count]
+	end
 
-	U --> C --> L --> M
-	L --> T --> W
-	W <--> N
-	N --> R --> A
-	W --> A
-	A --> I --> M
-	M --> P --> O
-	I -. repeat local training and sync .-> T
+	subgraph B[Device B]
+		B1[Capture labeled images] --> B2[Local dataset]
+		B2 --> B3[Train local TFLite model]
+		B3 --> B4[Checkpoint<br/>weights + sample count]
+	end
 
-	N --- D1[Device A]
-	N --- D2[Device B]
-	N --- D3[Device C]
+	subgraph C[Device C]
+		C1[Capture labeled images] --> C2[Local dataset]
+		C2 --> C3[Train local TFLite model]
+		C3 --> C4[Checkpoint<br/>weights + sample count]
+	end
+
+	A4 <--> N[Nearby Connections<br/>P2P_STAR network]
+	B4 <--> N
+	C4 <--> N
+
+	N --> X[Exchange model checkpoints]
+	X --> F[Weighted FedAvg<br/>runs on every device]
+	F --> U[Update each local model]
+	U --> I[Local inference<br/>classification result]
+	U -. next training round .-> A3
+	U -. next training round .-> B3
+	U -. next training round .-> C3
 ```
 
-**In short:** capture locally, train locally, exchange model weights (not raw
-images), average them across peers, and continue with the improved model.
+**How to read it:** each device captures and trains locally. Devices exchange
+model checkpoints through Nearby Connections, independently run weighted FedAvg,
+and continue training with the updated model. Raw images do not leave the device.
 
 ![Training Interface](imgs/training.png)
 
