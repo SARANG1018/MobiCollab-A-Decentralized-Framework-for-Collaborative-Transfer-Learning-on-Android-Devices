@@ -59,6 +59,7 @@ flowchart LR
 	class DATA,TRAIN,SAVE,AVG,MODEL model
 	class P2P,EXCHANGE network
 	class RESULT result
+	linkStyle default stroke:#334155,stroke-width:1.8px
 ```
 
 **How to read it:** Android devices capture data locally, the ML layer trains
